@@ -1,0 +1,15 @@
+data/
+bags/
+results/
+plots/
+model/
+__pycache__/
+*.pyc
+*.bag
+*.db3
+*.zip
+*.tar
+*.gz
+*.pt
+*.pth
+*.onnx

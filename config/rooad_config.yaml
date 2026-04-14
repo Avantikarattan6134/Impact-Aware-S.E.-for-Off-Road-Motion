@@ -1,0 +1,106 @@
+# ============================================================
+# ROOAD InEKF Pipeline Configuration
+# ============================================================
+
+# ---- Dataset / ROS bag ----
+data:
+  bag_dir: "bags/"          # folder containing .bag files
+  # ROOAD ROS topic names
+  imu_topic:    "/vectornav/IMU"       # sensor_msgs/Imu  @ 400 Hz
+  rtk_topic:    "/rtk/fix"            # sensor_msgs/NavSatFix @ 10 Hz
+  heading_topic: "/rtk/heading"        # std_msgs/Float64  @ 10 Hz (deg, true north)
+  # Local-metric frame: convert GPS → ENU at this reference lat/lon/alt
+  ref_lat:  30.5593          # degrees  (RELLIS campus, TX)
+  ref_lon:  -96.4683
+  ref_alt:  107.0            # metres
+  # Gravity vector (NED → we flip to ENU: z is up)
+  gravity:  [0.0, 0.0, -9.80665]   # m/s² in ENU
+
+# ---- Filter initialisation ----
+init:
+  # Initial covariance diagonal [rot(rad²), vel(m²/s²), pos(m²), bg(rad²/s²), ba(m²/s⁴)]
+  P0_rot:   1.0e-4
+  P0_vel:   0.01
+  P0_pos:   0.01
+  P0_bg:    1.0e-6
+  P0_ba:    1.0e-4
+  # Static bias init: average first N IMU samples
+  static_init_samples: 400    # 1 second at 400 Hz
+
+# ---- Baseline IMU-only InEKF (fixed Q) ----
+ekf:
+  # Process noise spectral densities (continuous-time)
+  sigma_gyro:  3.0e-3    # rad/s/√Hz  (gyro white noise)
+  sigma_accel: 0.05      # m/s²/√Hz  (accel white noise)
+  sigma_bg:    1.0e-5    # rad/s²/√Hz (gyro bias random walk)
+  sigma_ba:    2.0e-4    # m/s²/√Hz  (accel bias random walk)
+
+# ---- Jerk-based heuristic Q inflation ----
+jerk:
+  window:         20      # IMU samples for jerk smoothing
+  threshold:      8.0     # m/s³  — jerk magnitude above this → impact
+  alpha_min:      1.0     # minimum Q scale factor
+  alpha_max:     15.0     # maximum Q scale factor
+  alpha_decay:    0.95    # exponential decay per step when below threshold
+  beta_max:       0.85    # NHC relaxation at peak impact (0=full, 1=none)
+  beta_decay:     0.90    # NHC relaxation decay per step after impact
+
+# ---- LSTM noise adapter ----
+lstm:
+  window:         50      # input window length (IMU samples)
+  features:       9       # [ax, ay, az, gx, gy, gz, jerk_mag, |acc|, |gyro|]
+  hidden_size:    64
+  num_layers:     2
+  dropout:        0.2
+  alpha_min:      0.1     # min predicted Q scale
+  alpha_max:     20.0     # max predicted Q scale
+  model_path:  "model/lstm_noise_adapter.pt"
+
+# ---- LSTM training ----
+training:
+  epochs:        150     # more epochs — val loss still improving at 80
+  batch_size:    64
+  lr:            1.0e-3
+  weight_decay:  1.0e-5
+  val_frac:      0.15
+  seed:          42
+  # Label generation: sweep Q-scale α for each window, pick best ATE α
+  alpha_sweep:   [0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0]
+  horizon:       200      # IMU steps ahead to evaluate error for labelling
+
+# ---- Jerk segmentation ----
+segment:
+  jerk_threshold:  8.0   # same as heuristic
+  min_segment_len: 10    # min samples to count as a segment
+  smooth_window:   20
+
+# ---- Evaluation ----
+eval:
+  ate_align: true         # SE(3) alignment before ATE (Umeyama)
+  rpe_delta: 10           # frames between RPE poses
+
+# ---- Output ----
+output:
+  results_dir: "results/"
+  save_trajectories: true
+  save_plots: true
+
+# ---- Non-Holonomic Constraint (NHC) update ----
+nhc:
+  enabled: true
+  rate:           10     # apply every N IMU steps (10 = every 25ms at 400Hz)
+  sigma_lat:      0.10   # lateral  velocity residual [m/s]
+  sigma_vert:     0.50   # vertical velocity residual [m/s]
+  skip_threshold: 14.0   # alpha_R >= this → skip NHC (only at peak impact)
+
+# ---- GPS position update ----
+gps:
+  enabled:       true
+  sigma_h:       0.02    # horizontal noise [m]  RTK ~2 cm
+  sigma_v:       0.05    # vertical noise   [m]  RTK ~5 cm
+
+# ---- Visual Odometry update ----
+vo:
+  enabled:         true
+  sigma_rotation:  0.15    # VO rotation noise [rad] per axis — loose to handle off-road vibration
+  min_features:    150     # min tracked features to accept VO update

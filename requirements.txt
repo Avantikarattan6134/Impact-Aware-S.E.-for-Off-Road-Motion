@@ -1,0 +1,9 @@
+numpy>=1.24
+scipy>=1.10
+torch>=2.0
+rosbags>=0.9.11
+pyproj>=3.5
+matplotlib>=3.7
+pyyaml>=6.0
+tqdm>=4.65
+pandas>=2.0
