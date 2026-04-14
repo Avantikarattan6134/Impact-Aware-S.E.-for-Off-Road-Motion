@@ -1,8 +1,5 @@
 data/
 bags/
-results/
-plots/
-model/
 __pycache__/
 *.pyc
 *.bag
